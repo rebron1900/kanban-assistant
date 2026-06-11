@@ -10,6 +10,7 @@ import { addLog, formatLogs, logStats } from './logger';
 import { RibbonManager } from './ui/ribbon';
 import { StatusBarManager } from './ui/status-bar';
 import { DailyNoteInjector } from './injector';
+import { Tracker } from './tracker';
 
 export default class KanbanAssistantPlugin extends Plugin {
   settings: PluginSettings;
@@ -135,7 +136,11 @@ export default class KanbanAssistantPlugin extends Plugin {
       const injector = new DailyNoteInjector(this.app);
       await injector.inject(groups, cards.length, this.settings);
 
-      // 5. 更新缓存并保存
+      // 6. 老化追踪快照
+      const tracker = new Tracker(this.settings);
+      tracker.snapshot(cards, groups);
+
+      // 7. 更新缓存并保存
       this.settings.cache = updateCache(
         this.settings.cache,
         cards,
@@ -352,6 +357,45 @@ class KanbanAssistantSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           }),
       );
+
+    containerEl.createEl('hr');
+
+    // — 老化追踪 —
+    containerEl.createEl('h3', { text: '老化追踪' });
+    new Setting(containerEl)
+      .setName('启用老化追踪')
+      .setDesc('记录每日快照，分析卡片滞留时间和完成趋势')
+      .addToggle((t) =>
+        t.setValue(this.plugin.settings.tracker.enabled).onChange(async (v) => {
+          this.plugin.settings.tracker.enabled = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    // 显示历史摘要
+    const hist = this.plugin.settings.tracker.history;
+    if (hist.length > 0) {
+      const last7 = hist.slice(-7);
+      const totalDone = last7.reduce((s, d) => s + d.completedToday, 0);
+      const avgOverdue = Math.round(last7.reduce((s, d) => s + d.overdueCount, 0) / last7.length);
+      containerEl.createEl('p', {
+        text: `最近 7 天：完成 ${totalDone} 项 · 日均逾期 ${avgOverdue} 项 · 共 ${hist.length} 天记录`,
+        cls: 'setting-item-description',
+      });
+    }
+
+    // 周报预览按钮
+    if (this.plugin.settings.tracker.enabled) {
+      new Setting(containerEl)
+        .setName('查看周报')
+        .setDesc('基于历史数据生成的趋势摘要')
+        .addButton((b) =>
+          b.setButtonText('📊 生成周报').onClick(() => {
+            const tracker = new Tracker(this.plugin.settings);
+            new Notice(tracker.weeklySummary(), 8000);
+          }),
+        );
+    }
 
     containerEl.createEl('hr');
 
