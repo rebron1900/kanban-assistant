@@ -1,58 +1,210 @@
 /// <reference types="obsidian" />
 
+// ============================================================
+// 核心数据结构
+// ============================================================
+
 /**
  * 看板助手 — 提醒级别定义
- * 用户可自定义多个级别，每个级别决定哪类卡片被提醒
  */
 export interface ReminderLevel {
-  /** 级别名称，如"逾期"、"今日到期" */
   name: string;
-  /**
-   * 条件类型：
-   * - overdue: 卡片日期已过今天
-   * - due_within: 卡片日期在 N 天内到期
-   * - created_since: 卡片创建时间距今超过 N 天（用于无日期的卡）
-   */
   condition: 'overdue' | 'due_within' | 'created_since';
-  /** 时间阈值（天） */
   days: number;
-  /** Notice 文字前缀，如 "🔴" */
   prefix: string;
-  /** 是否启用 */
   enabled: boolean;
 }
 
-export interface PluginSettings {
-  /** 自动检查间隔（分钟），0 = 仅启动时检查 */
-  checkInterval: number;
-  /** 启动时是否自动检查 */
-  autoCheckOnStart: boolean;
-  /** 日期正则匹配模式（默认匹配 {YYYY-MM-DD}） */
-  datePattern: string;
-  /** 提醒级别列表 */
-  levels: ReminderLevel[];
-}
-
-/** 解析出的看板卡片 */
+/**
+ * 解析出的看板卡片
+ */
 export interface KanbanCard {
-  /** 所属文件路径 */
   sourceFile: string;
-  /** 看板友好名称（文件名去扩展名） */
   sourceBoard: string;
-  /** 所属列表/泳道名 */
   listName: string;
-  /** 卡片标题 */
   title: string;
-  /** 解析出的日期（ISO 格式 YYYY-MM-DD） */
   date: string | null;
-  /** 卡片是否已完成 */
   isComplete: boolean;
-  /** 是否是归档卡片 */
   isArchived: boolean;
+  /** 首次被插件扫描到的时间戳（ms），来自缓存 */
+  firstSeen?: number;
 }
 
-/** 按级别分组的提醒结果 */
+/**
+ * 按级别分组的提醒结果
+ */
 export interface ReminderGroup {
   level: ReminderLevel;
   cards: KanbanCard[];
 }
+
+// ============================================================
+// 缓存（增量扫描 + 老化追踪）
+// ============================================================
+
+/** 单文件的缓存状态 */
+export interface FileCacheEntry {
+  mtime: number;           // 文件修改时间戳
+  fingerprints: string[];  // 该文件下所有卡片的指纹
+}
+
+/** 全量缓存 */
+export interface ScanCache {
+  version: number;
+  lastScan: number;
+  files: Record<string, FileCacheEntry>;
+  /** 指纹 → 首次出现时间戳 */
+  firstSeen: Record<string, number>;
+}
+
+// ============================================================
+// 看板独立配置 & 排除规则
+// ============================================================
+
+/** 单看板的配置覆盖 */
+export interface BoardConfig {
+  enabled: boolean;
+  /** 若设此值则覆盖全局 levels */
+  levels: ReminderLevel[] | null;
+  /** 忽略的列表名 */
+  excludedLists: string[];
+  /** 忽略的标签字符串 */
+  excludedTags: string[];
+}
+
+/** 排除规则 */
+export interface ExclusionRule {
+  type: 'board' | 'list' | 'tag';
+  value: string;
+  enabled: boolean;
+}
+
+// ============================================================
+// Daily Note 注入
+// ============================================================
+
+export interface DailyNoteConfig {
+  enabled: boolean;
+  /** 模板：可用 {{summary}} {{overdue}} {{today}} {{upcoming}} 占位 */
+  template: string;
+  /** 相对于文件的插入位置：顶部或底部 */
+  position: 'top' | 'bottom';
+  /** 匹配日记文件的正则（默认匹配 YYYY-MM-DD.md / YYYY年MM月DD日.md） */
+  filenamePattern: string;
+}
+
+// ============================================================
+// 老化追踪数据
+// ============================================================
+
+export interface TrackerSnapshot {
+  date: string;          // YYYY-MM-DD
+  totalCards: number;
+  completedToday: number;
+  overdueCount: number;
+}
+
+export interface TrackerData {
+  enabled: boolean;
+  /** 每日快照 */
+  history: TrackerSnapshot[];
+  /** 上周平均完成数（移动平均） */
+  weeklyAvgCompletion: number;
+}
+
+// ============================================================
+// 诊断日志
+// ============================================================
+
+export interface LogEntry {
+  timestamp: number;
+  level: 'info' | 'warn' | 'error';
+  message: string;
+  detail?: string;
+}
+
+// ============================================================
+// 插件总设置（序列化到 plugin data）
+// ============================================================
+
+export interface PluginSettings {
+  // — 通用 —
+  /** 自动检查间隔（分钟），0 = 仅启动时 */
+  checkInterval: number;
+  /** 启动时自动检查 */
+  autoCheckOnStart: boolean;
+  /** 日期正则 */
+  datePattern: string;
+  /** 提醒级别 */
+  levels: ReminderLevel[];
+
+  // — 缓存（Phase 1） —
+  /** 扫描缓存，用于增量更新和老化追踪 */
+  cache: ScanCache;
+
+  // — 看板独立配置（Phase 3） —
+  /** 按文件路径 → 配置 */
+  boards: Record<string, BoardConfig>;
+  /** 全局排除规则 */
+  exclusions: ExclusionRule[];
+
+  // — Daily Note（Phase 4） —
+  /** Daily Note 注入配置 */
+  dailyNote: DailyNoteConfig;
+
+  // — 老化追踪（Phase 5） —
+  /** 老化追踪配置和数据 */
+  tracker: TrackerData;
+
+  // — 诊断日志 —
+  /** 最近的日志条目环形缓冲 */
+  logs: LogEntry[];
+}
+
+// ============================================================
+// 默认值
+// ============================================================
+
+export const DEFAULT_LEVELS: ReminderLevel[] = [
+  { name: '逾期', condition: 'overdue', days: 0, prefix: '🔴', enabled: true },
+  { name: '今日到期', condition: 'due_within', days: 0, prefix: '🟠', enabled: true },
+  { name: '近3天', condition: 'due_within', days: 3, prefix: '🟡', enabled: true },
+  { name: '未来一周', condition: 'due_within', days: 7, prefix: '🔵', enabled: true },
+];
+
+export const DEFAULT_SETTINGS: PluginSettings = {
+  checkInterval: 30,
+  autoCheckOnStart: true,
+  datePattern: '\\{(\\d{4}-\\d{2}-\\d{2})\\}',
+  levels: DEFAULT_LEVELS,
+
+  cache: {
+    version: 1,
+    lastScan: 0,
+    files: {},
+    firstSeen: {},
+  },
+
+  boards: {},
+  exclusions: [],
+
+  dailyNote: {
+    enabled: false,
+    template: `## ⏰ 看板提醒
+
+{{overdue}}
+{{today}}
+{{upcoming}}
+`,
+    position: 'top',
+    filenamePattern: '',
+  },
+
+  tracker: {
+    enabled: false,
+    history: [],
+    weeklyAvgCompletion: 0,
+  },
+
+  logs: [],
+};

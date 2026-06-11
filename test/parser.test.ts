@@ -12,6 +12,7 @@ interface KanbanCard {
   date: string | null;
   isComplete: boolean;
   isArchived: boolean;
+  firstSeen?: number;
 }
 
 // 直接从 parser.ts 复制 parseKanbanMd 的核心逻辑（不依赖 Obsidian 导入）
