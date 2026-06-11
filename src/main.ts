@@ -2,6 +2,8 @@
 
 import { App, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
 import type { PluginSettings, ReminderLevel } from './types';
+import { scanAllBoards } from './parser';
+import { runReminderCheck } from './reminder';
 
 // ————— 默认设置 —————
 
@@ -76,11 +78,16 @@ export default class KanbanAssistantPlugin extends Plugin {
     }
   }
 
-  // ————— 提醒检查（占位，后续实现） —————
+  // ————— 提醒检查 —————
 
-  checkReminders() {
-    // 后续实现：扫描 → 解析 → 分类 → 弹窗
-    new Notice('🪧 看板助手检查完毕');
+  async checkReminders() {
+    try {
+      const cards = await scanAllBoards(this.app, this.settings.datePattern);
+      await runReminderCheck(cards, this.settings);
+    } catch (e) {
+      console.error('看板助手检查失败:', e);
+      new Notice('⚠️ 看板助手检查失败，详见控制台');
+    }
   }
 }
 
