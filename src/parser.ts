@@ -84,6 +84,7 @@ export function parseKanbanMd(
 
     cards.push({
       sourceFile: sourcePath,
+      sourceBoard: friendlyBoardName(sourcePath),
       listName: currentList,
       title,
       date,
@@ -130,6 +131,17 @@ async function isKanbanBoard(app: App, file: TFile): Promise<boolean> {
 
   const plugin = frontmatter['kanban-plugin'];
   return plugin === 'board' || plugin === 'basic';
+}
+
+/**
+ * 从文件路径提取友好看板名称。
+ * 例如: "Project/Work Kanban.md" → "Work Kanban"
+ */
+function friendlyBoardName(filePath: string): string {
+  // 取文件名（去目录）
+  const name = filePath.replace(/^.*[\\/]/, '');
+  // 去扩展名
+  return name.replace(/\.md$/i, '');
 }
 
 /**

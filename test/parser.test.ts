@@ -6,6 +6,7 @@
 // 模拟 parseKanbanMd 所需的类型
 interface KanbanCard {
   sourceFile: string;
+  sourceBoard: string;
   listName: string;
   title: string;
   date: string | null;
@@ -68,6 +69,7 @@ function parseKanbanMd(
 
     cards.push({
       sourceFile: sourcePath,
+      sourceBoard: sourcePath.replace(/^.*[/\\]/, '').replace(/\.md$/i, ''),
       listName: currentList,
       title,
       date,

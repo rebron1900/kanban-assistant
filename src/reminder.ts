@@ -110,11 +110,11 @@ export function showReminders(groups: ReminderGroup[]): void {
     const { level, cards } = group;
     const emoji = level.prefix || '📌';
 
-    // 格式：一行标题 + 每张卡片一行
+    // 格式：一行标题 + 每张卡片一行（含看板名）
     const titleLine = `${emoji} ${level.name}（${cards.length}项）`;
     const cardLines = cards
-      .slice(0, 10) // 最多显示 10 张，避免刷屏
-      .map((c) => `  · ${c.title}${c.date ? ` (${c.date})` : ''}`)
+      .slice(0, 10)
+      .map((c) => `  · ${c.title}${c.date ? ` (${c.date})` : ''} [${c.sourceBoard}]`)
       .join('\n');
 
     const more = cards.length > 10 ? `\n  ...及其他 ${cards.length - 10} 项` : '';

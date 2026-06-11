@@ -35,8 +35,10 @@ export interface PluginSettings {
 
 /** 解析出的看板卡片 */
 export interface KanbanCard {
-  /** 所属文件名 */
+  /** 所属文件路径 */
   sourceFile: string;
+  /** 看板友好名称（文件名去扩展名） */
+  sourceBoard: string;
   /** 所属列表/泳道名 */
   listName: string;
   /** 卡片标题 */

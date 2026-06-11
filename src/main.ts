@@ -148,57 +148,101 @@ class KanbanAssistantSettingTab extends PluginSettingTab {
           }),
       );
 
+    // — 手动测试按钮 —
+    new Setting(containerEl)
+      .setName('立即检查')
+      .setDesc('手动触发一次扫描和提醒')
+      .addButton((b) =>
+        b.setButtonText('🔍 立即检查').onClick(() => {
+          this.plugin.checkReminders();
+        }),
+      );
+
+    containerEl.createEl('hr');
+
+    // — 提醒级别管理 —
     containerEl.createEl('h3', { text: '提醒级别' });
+    containerEl.createEl('p', {
+      text: '级别按从上到下的顺序匹配，一张卡片只进入第一个符合条件的级别。',
+      cls: 'setting-item-description',
+    });
 
     const levelContainer = containerEl.createDiv();
 
     const renderLevels = () => {
       levelContainer.empty();
-      this.plugin.settings.levels.forEach((level, i) => {
+      const levels = this.plugin.settings.levels;
+
+      levels.forEach((level, i) => {
         const item = levelContainer.createDiv({ cls: 'setting-item' });
 
-        new Setting(item)
-          .setName(`级别 ${i + 1}`)
-          .addText((t) =>
-            t.setValue(level.name).setPlaceholder('级别名').onChange(async (v) => {
+        const setting = new Setting(item);
+        setting.setName(`#${i + 1} ${level.name || '未命名'}`);
+
+        setting.addText((t) =>
+          t
+            .setValue(level.name)
+            .setPlaceholder('级别名')
+            .onChange(async (v) => {
               this.plugin.settings.levels[i].name = v;
               await this.plugin.saveSettings();
             }),
-          )
-          .addDropdown((d) =>
-            d
-              .addOption('overdue', '逾期')
-              .addOption('due_within', '到期前N天')
-              .addOption('created_since', '创建超N天')
-              .setValue(level.condition)
+        );
+
+        setting.addDropdown((d) =>
+          d
+            .addOption('overdue', '逾期')
+            .addOption('due_within', '到期前N天')
+            .addOption('created_since', '创建超N天（无日期卡）')
+            .setValue(level.condition)
+            .onChange(async (v) => {
+              this.plugin.settings.levels[i].condition = v as ReminderLevel['condition'];
+              await this.plugin.saveSettings();
+            }),
+        );
+
+        setting.addText((t) =>
+          t
+            .setValue(String(level.days))
+            .setPlaceholder('天数')
+            .onChange(async (v) => {
+              const n = parseInt(v);
+              if (!isNaN(n)) {
+                this.plugin.settings.levels[i].days = n;
+                await this.plugin.saveSettings();
+              }
+            }),
+        );
+
+        // 前缀 + 启用 + 删除 放第二行
+        new Setting(item)
+          .addText((t) =>
+            t
+              .setValue(level.prefix)
+              .setPlaceholder('前缀')
               .onChange(async (v) => {
-                this.plugin.settings.levels[i].condition = v as ReminderLevel['condition'];
+                this.plugin.settings.levels[i].prefix = v;
                 await this.plugin.saveSettings();
               }),
           )
-          .addText((t) =>
+          .addToggle((t) =>
             t
-              .setValue(String(level.days))
-              .setPlaceholder('天数')
+              .setValue(level.enabled)
+              .setTooltip('启用/禁用')
               .onChange(async (v) => {
-                const n = parseInt(v);
-                if (!isNaN(n)) {
-                  this.plugin.settings.levels[i].days = n;
-                  await this.plugin.saveSettings();
-                }
+                this.plugin.settings.levels[i].enabled = v;
+                await this.plugin.saveSettings();
               }),
           )
-          .addText((t) =>
-            t.setValue(level.prefix).setPlaceholder('前缀').onChange(async (v) => {
-              this.plugin.settings.levels[i].prefix = v;
-              await this.plugin.saveSettings();
-            }),
-          )
-          .addToggle((t) =>
-            t.setValue(level.enabled).onChange(async (v) => {
-              this.plugin.settings.levels[i].enabled = v;
-              await this.plugin.saveSettings();
-            }),
+          .addExtraButton((b) =>
+            b
+              .setIcon('trash')
+              .setTooltip('删除此级别')
+              .onClick(async () => {
+                this.plugin.settings.levels.splice(i, 1);
+                await this.plugin.saveSettings();
+                renderLevels();
+              }),
           );
       });
 
