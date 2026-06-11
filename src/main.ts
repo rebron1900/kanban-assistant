@@ -3,8 +3,8 @@
 import { App, Notice, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian';
 import type { PluginSettings, ReminderLevel, KanbanCard } from './types';
 import { DEFAULT_SETTINGS } from './types';
-import { scanAllBoards, parseKanbanMd } from './parser';
-import { classifyCards, showReminders, getTodayISO } from './reminder';
+import { scanAllBoards, parseKanbanMd, scanFilteredBoards, getBoardLevels } from './parser';
+import { classifyCards, classifyPerBoard, showReminders, getTodayISO } from './reminder';
 import { updateCache, getChangedFiles, getFileStats } from './cache';
 import { addLog, formatLogs, logStats } from './logger';
 import { RibbonManager } from './ui/ribbon';
@@ -116,12 +116,12 @@ export default class KanbanAssistantPlugin extends Plugin {
     try {
       const t0 = performance.now();
 
-      // 1. 增量扫描（只读变更过的文件）
+      // 1. 带过滤的增量扫描（排除规则 + 看板配置）
       const cards = await this.scanWithCache();
 
-      // 2. 分类
+      // 2. 按看板分类（每个看板可用自己的 levels）
       const today = getTodayISO();
-      const groups = classifyCards(cards, this.settings.levels, today);
+      const groups = classifyPerBoard(cards, this.settings, today);
 
       // 3. 弹窗提醒
       showReminders(groups);
@@ -184,7 +184,7 @@ export default class KanbanAssistantPlugin extends Plugin {
         'info',
         `全量扫描（${changed.length === 0 ? '首次' : changed.length + ' 个文件变更'}）`,
       );
-      allCards = await scanAllBoards(this.app, this.settings.datePattern);
+      allCards = await scanFilteredBoards(this.app, this.settings);
     } else {
       // 增量：只重读变更文件
       const dateRegex = new RegExp(this.settings.datePattern, 'g');
@@ -428,5 +428,143 @@ class KanbanAssistantSettingTab extends PluginSettingTab {
     };
 
     renderLogs();
+
+    // — 排除规则 —
+    containerEl.createEl('hr');
+    containerEl.createEl('h3', { text: '排除规则' });
+    containerEl.createEl('p', {
+      text: '匹配任意规则的卡片将不会出现在提醒中。',
+      cls: 'setting-item-description',
+    });
+
+    const exclusionContainer = containerEl.createDiv();
+    const renderExclusions = () => {
+      exclusionContainer.empty();
+      this.plugin.settings.exclusions.forEach((rule, i) => {
+        const s = new Setting(exclusionContainer)
+          .setName(`规则 ${i + 1}`)
+          .addDropdown((d) =>
+            d
+              .addOption('board', '看板名')
+              .addOption('list', '列表名')
+              .addOption('tag', '标签')
+              .setValue(rule.type)
+              .onChange(async (v) => {
+                this.plugin.settings.exclusions[i].type = v as any;
+                await this.plugin.saveSettings();
+              }),
+          )
+          .addText((t) =>
+            t.setValue(rule.value).setPlaceholder('匹配内容').onChange(async (v) => {
+              this.plugin.settings.exclusions[i].value = v;
+              await this.plugin.saveSettings();
+            }),
+          )
+          .addToggle((t) =>
+            t.setValue(rule.enabled).onChange(async (v) => {
+              this.plugin.settings.exclusions[i].enabled = v;
+              await this.plugin.saveSettings();
+            }),
+          )
+          .addExtraButton((b) =>
+            b.setIcon('trash').onClick(async () => {
+              this.plugin.settings.exclusions.splice(i, 1);
+              await this.plugin.saveSettings();
+              renderExclusions();
+            }),
+          );
+      });
+      new Setting(exclusionContainer).addButton((b) =>
+        b.setButtonText('+ 添加规则').onClick(async () => {
+          this.plugin.settings.exclusions.push({ type: 'board', value: '', enabled: true });
+          await this.plugin.saveSettings();
+          renderExclusions();
+        }),
+      );
+    };
+    renderExclusions();
+
+    // — 看板独立配置 —
+    containerEl.createEl('hr');
+    containerEl.createEl('h3', { text: '看板独立配置' });
+    containerEl.createEl('p', {
+      text: '为特定看板覆盖全局设置。设好后在右侧"提醒级别"调整该看板的专属级别。',
+      cls: 'setting-item-description',
+    });
+
+    const boardContainer = containerEl.createDiv();
+    const renderBoards = () => {
+      boardContainer.empty();
+      const boardEntries = Object.entries(this.plugin.settings.boards);
+      if (boardEntries.length === 0) {
+        boardContainer.createEl('p', {
+          text: '暂无配置。使用下方按钮添加看板。',
+          cls: 'setting-item-description',
+        });
+      }
+      boardEntries.forEach(([path, config]) => {
+        const s = new Setting(boardContainer)
+          .setName(config.levels ? `✏️ ${path}` : path)
+          .setDesc(`${config.excludedLists.length} 个排除列表`)
+          .addToggle((t) =>
+            t.setValue(config.enabled).onChange(async (v) => {
+              this.plugin.settings.boards[path].enabled = v;
+              await this.plugin.saveSettings();
+            }),
+          )
+          .addExtraButton((b) =>
+            b.setIcon('trash').onClick(async () => {
+              delete this.plugin.settings.boards[path];
+              await this.plugin.saveSettings();
+              renderBoards();
+            }),
+          );
+
+        // 展开：排除列表
+        const detail = boardContainer.createDiv({ cls: 'setting-item' });
+        detail.style.paddingLeft = '40px';
+        new Setting(detail)
+          .setName('排除列表（逗号分隔）')
+          .addText((t) =>
+            t
+              .setValue(config.excludedLists.join(', '))
+              .setPlaceholder('已归档, 将来再说')
+              .onChange(async (v) => {
+                this.plugin.settings.boards[path].excludedLists = v
+                  .split(',')
+                  .map((s) => s.trim())
+                  .filter(Boolean);
+                await this.plugin.saveSettings();
+              }),
+          );
+      });
+
+      new Setting(boardContainer).addButton((b) =>
+        b.setButtonText('+ 添加看板').onClick(async () => {
+          const path = await askForBoardPath(this.plugin);
+          if (path && !this.plugin.settings.boards[path]) {
+            this.plugin.settings.boards[path] = {
+              enabled: true,
+              levels: null,
+              excludedLists: [],
+              excludedTags: [],
+            };
+            await this.plugin.saveSettings();
+            renderBoards();
+          }
+        }),
+      );
+    };
+    renderBoards();
   }
+}
+
+/**
+ * 弹窗让用户选择看板文件路径。
+ * 如果 Obsidian 环境支持，用 SuggestModal；否则用 prompt。
+ */
+async function askForBoardPath(plugin: KanbanAssistantPlugin): Promise<string | null> {
+  // 简单方案：用 prompt
+  const path = prompt('输入看板文件路径（相对于 vault 根目录）:', '');
+  return path?.trim() || null;
 }
