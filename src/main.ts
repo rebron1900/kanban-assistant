@@ -4,18 +4,27 @@ import { App, Notice, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian'
 import type { PluginSettings, ReminderLevel, KanbanCard } from './types';
 import { DEFAULT_SETTINGS } from './types';
 import { scanAllBoards, parseKanbanMd } from './parser';
-import { runReminderCheck } from './reminder';
+import { classifyCards, showReminders, getTodayISO } from './reminder';
 import { updateCache, getChangedFiles, getFileStats } from './cache';
 import { addLog, formatLogs, logStats } from './logger';
+import { RibbonManager } from './ui/ribbon';
+import { StatusBarManager } from './ui/status-bar';
 
 export default class KanbanAssistantPlugin extends Plugin {
   settings: PluginSettings;
   private timer: number | null = null;
-  /** 防抖定时器 */
   private watchDebounce: number | null = null;
+  private ribbon: RibbonManager;
+  private statusBar: StatusBarManager;
 
   async onload() {
     await this.loadSettings();
+
+    // — Ribbon 角标 + 状态栏 —
+    this.ribbon = new RibbonManager(this);
+    this.ribbon.init();
+    this.statusBar = new StatusBarManager(this);
+    this.statusBar.init();
 
     this.addSettingTab(new KanbanAssistantSettingTab(this.app, this));
 
@@ -52,6 +61,8 @@ export default class KanbanAssistantPlugin extends Plugin {
   onunload() {
     this.clearTimer();
     this.clearWatchDebounce();
+    this.ribbon?.destroy();
+    this.statusBar?.destroy();
   }
 
   async loadSettings() {
@@ -108,22 +119,30 @@ export default class KanbanAssistantPlugin extends Plugin {
       // 1. 增量扫描（只读变更过的文件）
       const cards = await this.scanWithCache();
 
-      // 2. 分类 + 提醒
-      await runReminderCheck(cards, this.settings);
+      // 2. 分类
+      const today = getTodayISO();
+      const groups = classifyCards(cards, this.settings.levels, today);
 
-      // 3. 更新缓存并保存
+      // 3. 弹窗提醒
+      showReminders(groups);
+
+      // 4. 更新 Ribbon 角标 + 状态栏
+      this.ribbon.update(groups);
+      this.statusBar.update(groups, cards.length);
+
+      // 5. 更新缓存并保存
       this.settings.cache = updateCache(
         this.settings.cache,
         cards,
         getFileStats(this.app.vault.getMarkdownFiles()),
       ).cache;
 
-      // 4. 记录日志
+      // 6. 记录日志
       const elapsed = Math.round(performance.now() - t0);
       this.settings.logs = addLog(
         this.settings.logs,
         'info',
-        `扫描完成：${cards.length} 张卡片，耗时 ${elapsed}ms`,
+        `扫描完成：${cards.length} 张卡片，${groups.length} 组提醒，耗时 ${elapsed}ms`,
       );
 
       await this.saveSettings();
@@ -208,7 +227,7 @@ export default class KanbanAssistantPlugin extends Plugin {
   /**
    * 带缓存的扫描：使用缓存数据填充 firstSeen。
    */
-  private async scanWithCache(): Promise<import('./types').KanbanCard[]> {
+  private async scanWithCache(): Promise<KanbanCard[]> {
     const cards = await this.scanWithCards();
     // 从缓存填充 firstSeen
     return cards.map((c) => {
