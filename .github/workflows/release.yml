@@ -34,14 +34,21 @@ jobs:
         run: |
           # 读取 manifest.json 中的版本号用于 Release 标题
           VERSION=$(node -p "require('./manifest.json').version")
-          
-          # 打包发布文件（Obsidian 社区插件只需这三个文件）
+
+          # 打包发布文件（只包含确实存在的文件）
           mkdir -p release
-          cp main.js manifest.json styles.css release/ 2>/dev/null || true
+          ASSETS=""
+          for f in main.js manifest.json styles.css; do
+            if [ -f "$f" ]; then
+              cp "$f" release/
+              ASSETS="$ASSETS $f"
+            fi
+          done
           cd release
-          
+
           # 创建 GitHub Release
+          # shellcheck disable=SC2086
           gh release create "$TAG" \
             --title "看板助手 v$VERSION" \
             --notes "自动构建发布" \
-            main.js manifest.json styles.css
+            $ASSETS
