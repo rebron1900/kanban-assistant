@@ -9,6 +9,7 @@ import { updateCache, getChangedFiles, getFileStats } from './cache';
 import { addLog, formatLogs, logStats } from './logger';
 import { RibbonManager } from './ui/ribbon';
 import { StatusBarManager } from './ui/status-bar';
+import { DailyNoteInjector } from './injector';
 
 export default class KanbanAssistantPlugin extends Plugin {
   settings: PluginSettings;
@@ -129,6 +130,10 @@ export default class KanbanAssistantPlugin extends Plugin {
       // 4. 更新 Ribbon 角标 + 状态栏
       this.ribbon.update(groups);
       this.statusBar.update(groups, cards.length);
+
+      // 5. 注入到 Daily Note
+      const injector = new DailyNoteInjector(this.app);
+      await injector.inject(groups, cards.length, this.settings);
 
       // 5. 更新缓存并保存
       this.settings.cache = updateCache(
@@ -305,6 +310,47 @@ class KanbanAssistantSettingTab extends PluginSettingTab {
         b.setButtonText('🔍 立即检查').onClick(() => {
           this.plugin.checkReminders();
         }),
+      );
+
+    containerEl.createEl('hr');
+
+    // — Daily Note —
+    containerEl.createEl('h3', { text: 'Daily Note 注入' });
+    const dnToggle = new Setting(containerEl)
+      .setName('启用 Daily Note 注入')
+      .setDesc('扫描结果自动写入今天的日记文件')
+      .addToggle((t) =>
+        t.setValue(this.plugin.settings.dailyNote.enabled).onChange(async (v) => {
+          this.plugin.settings.dailyNote.enabled = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName('插入位置')
+      .setDesc('提醒区块放在日记文件的顶部还是底部')
+      .addDropdown((d) =>
+        d
+          .addOption('top', '顶部')
+          .addOption('bottom', '底部')
+          .setValue(this.plugin.settings.dailyNote.position)
+          .onChange(async (v) => {
+            this.plugin.settings.dailyNote.position = v as 'top' | 'bottom';
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('日记文件名匹配')
+      .setDesc('自定义正则。留空则自动匹配常见格式 (YYYY-MM-DD)')
+      .addText((t) =>
+        t
+          .setValue(this.plugin.settings.dailyNote.filenamePattern)
+          .setPlaceholder('留空自动')
+          .onChange(async (v) => {
+            this.plugin.settings.dailyNote.filenamePattern = v;
+            await this.plugin.saveSettings();
+          }),
       );
 
     containerEl.createEl('hr');
